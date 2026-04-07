@@ -319,6 +319,24 @@ async function getStaffIds() {
     return new Set(ids);
 }
 
+async function getExpiryDisabledItems() {
+    const raw = await getConfigValue('expiry_disabled_items');
+    if (!raw) return new Set();
+    const items = raw
+        .split(',')
+        .map((s) => s.trim().toLowerCase())
+        .filter(Boolean);
+    return new Set(items);
+}
+
+async function setExpiryDisabledItems(set) {
+    const list = Array.from(set)
+        .map((s) => String(s || '').trim())
+        .filter(Boolean)
+        .join(',');
+    await setConfigValue('expiry_disabled_items', list);
+}
+
 async function isStaffOrAdmin(userId) {
     if (isAdmin(userId)) return true;
     const staff = await getStaffIds();
@@ -980,6 +998,7 @@ async function upsertMinStock(itemName, minQty) {
 
 async function runExpiryAlert(days = 30) {
     const alertChatId = await getAlertChatId();
+    const disabledItems = await getExpiryDisabledItems();
     const sheets = google.sheets({ version: 'v4', auth });
     const res = await sheets.spreadsheets.values.get({ spreadsheetId: CONFIG.SHEET_ID, range: `${SHEETS.ITEMS}!A:K` });
     const rows = res.data.values || [];
@@ -995,6 +1014,7 @@ async function runExpiryAlert(days = 30) {
         const expiry = r[9];
         const status = r[10];
         if (!item || !expiry) return;
+        if (disabledItems.has(String(item).trim().toLowerCase())) return;
         if (String(status || '').toLowerCase() !== 'active') return;
         const dt = parseExpiryToDate(expiry);
         if (!dt) return;
@@ -1061,6 +1081,10 @@ bot.command('help', async (ctx) => {
         `Commands:\n` +
         `- /stock\n` +
         `- /use <item> <qty>\n` +
+        `- /expiry [days]\n` +
+        `- /expiry disable <item>\n` +
+        `- /expiry enable <item>\n` +
+        `- /expiry disabled\n` +
         `- /summary [YYYY-MM]\n` +
         `- /unpaid\n` +
         `- /markpaid <invoice_no>\n` +
@@ -1069,6 +1093,46 @@ bot.command('help', async (ctx) => {
             : '') +
         `\nAccess: ${staff ? 'allowed' : 'not allowed (ask admin)'}`;
     ctx.reply(msg);
+});
+
+bot.command('expiry', async (ctx) => {
+    const allowed = await isStaffOrAdmin(ctx.from.id);
+    if (!allowed) return ctx.reply('❌ Not authorized.');
+    const parts = ctx.message.text.split(' ').slice(1).filter(Boolean);
+    const sub = (parts[0] || '').toLowerCase();
+    const itemName = parts.slice(1).join(' ').trim();
+
+    if (sub === 'disable') {
+        if (!itemName) return ctx.reply('Usage: /expiry disable <item>');
+        const disabled = await getExpiryDisabledItems();
+        disabled.add(itemName.toLowerCase());
+        await setExpiryDisabledItems(disabled);
+        return ctx.reply(`✅ Expiry alert disabled for: ${itemName}`);
+    }
+
+    if (sub === 'enable') {
+        if (!itemName) return ctx.reply('Usage: /expiry enable <item>');
+        const disabled = await getExpiryDisabledItems();
+        disabled.delete(itemName.toLowerCase());
+        await setExpiryDisabledItems(disabled);
+        return ctx.reply(`✅ Expiry alert enabled for: ${itemName}`);
+    }
+
+    if (sub === 'disabled') {
+        const disabled = await getExpiryDisabledItems();
+        const list = Array.from(disabled).sort();
+        return ctx.reply(list.length ? `Disabled expiry items:\n${list.join('\n')}` : 'No disabled expiry items.');
+    }
+
+    const days = Math.max(1, parseInt(parts[0] || '30', 10) || 30);
+    await ctx.reply(`⏳ Checking expiry within ${days} days...`);
+    try {
+        await runExpiryAlert(days);
+        await ctx.reply('✅ Expiry alert sent.');
+    } catch (e) {
+        console.error('Expiry command error:', e);
+        await ctx.reply('❌ Error: ' + (e?.message || 'Expiry alert failed'));
+    }
 });
 
 bot.on('photo', async (ctx) => {
@@ -1551,6 +1615,7 @@ bot.command('summary', async (ctx) => {
     const yyyy = now.getFullYear();
     const mm = String(now.getMonth() + 1).padStart(2, '0');
     const defaultTarget = `${yyyy}-${mm}`;
+    const isYearOnly = /^\d{4}$/.test(arg);
     const target = toMonthKeyFromDateValue(arg) || (/^\d{4}-\d{2}$/.test(arg) ? arg : defaultTarget);
 
     const sheets = google.sheets({ version: 'v4', auth });
@@ -1566,7 +1631,12 @@ bot.command('summary', async (ctx) => {
         return Boolean(toMonthKeyFromDateValue(r[0]));
     });
 
-    const filtered = dataRows.filter((r) => toMonthKeyFromDateValue(r[0]) === target);
+    const filtered = dataRows.filter((r) => {
+        const monthKey = toMonthKeyFromDateValue(r[0]);
+        if (!monthKey) return false;
+        if (isYearOnly) return monthKey.startsWith(`${arg}-`);
+        return monthKey === target;
+    });
     const sums = filtered.reduce(
         (acc, r) => {
             const amount = parseNumber(r[6]) || parseNumber(r[4]);
@@ -1584,7 +1654,7 @@ bot.command('summary', async (ctx) => {
     );
 
     ctx.reply(
-        `Summary ${target}\n` +
+        `Summary ${isYearOnly ? arg : target}\n` +
         `Paid count: ${sums.paidCount}\n` +
         `Paid total: ${round2(sums.paidTotal)} MMK\n` +
         `Unpaid count: ${sums.unpaidCount}\n` +
