@@ -1,0 +1,30 @@
+{
+  "name": "vc-bot",
+  "version": "1.0.0",
+  "description": "AI-powered Telegram Inventory and Voucher Management Bot for Aung Myin Clinic",
+  "main": "vc.js",
+  "scripts": {
+    "start": "node vc.js",
+    "dev": "nodemon vc.js",
+    "find-id": "node id_finder.js"
+  },
+  "dependencies": {
+    "@huggingface/inference": "^4.13.15",
+    "axios": "^1.6.0",
+    "dotenv": "^16.3.1",
+    "googleapis": "^128.0.0",
+    "multer": "^2.1.1",
+    "node-cron": "^3.0.3",
+    "telegraf": "^4.15.3",
+    "viber-bot": "^1.0.14",
+    "xlsx": "^0.18.5"
+  },
+  "devDependencies": {
+    "nodemon": "^3.0.1"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "author": "vc AI",
+  "license": "MIT"
+}
