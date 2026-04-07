@@ -1372,6 +1372,9 @@ bot.on('text', async (ctx, next) => {
 bot.command('stock', async (ctx) => {
     const allowed = await isStaffOrAdmin(ctx.from.id);
     if (!allowed) return ctx.reply('❌ Not authorized.');
+    const parts = ctx.message.text.split(' ').slice(1).filter(Boolean);
+    const page = Math.max(1, parseInt(parts[0] || '1', 10) || 1);
+    const pageSize = 20;
     console.log("Stock command processing for", ctx.from.id);
     const loading = await ctx.reply("📊 စာရင်းတွက်ချက်နေပါသည်...");
     try {
@@ -1379,13 +1382,26 @@ bot.command('stock', async (ctx) => {
         if (!Object.keys(summary).length) {
             return ctx.telegram.editMessageText(ctx.chat.id, loading.message_id, null, "❌ စာရင်းထဲတွင် data မရှိသေးပါ။");
         }
-        const stockList = Object.entries(summary)
+        const stockRows = Object.entries(summary)
             .filter(([n, q]) => q !== 0)
-            .sort((a, b) => a[0].localeCompare(b[0]))
-            .map(([n, q]) => `• ${n}: ${q}`)
-            .join('\n');
+            .sort((a, b) => a[0].localeCompare(b[0]));
 
-        ctx.telegram.editMessageText(ctx.chat.id, loading.message_id, null, "🏥 လက်ရှိဆေးလက်ကျန်\n\n" + (stockList || "လက်ကျန်မရှိပါ။"));
+        if (!stockRows.length) {
+            return ctx.telegram.editMessageText(ctx.chat.id, loading.message_id, null, "🏥 လက်ရှိဆေးလက်ကျန်\n\nလက်ကျန်မရှိပါ။");
+        }
+
+        const totalPages = Math.max(1, Math.ceil(stockRows.length / pageSize));
+        const safePage = Math.min(page, totalPages);
+        const start = (safePage - 1) * pageSize;
+        const pageRows = stockRows.slice(start, start + pageSize);
+        const stockList = pageRows.map(([n, q]) => `• ${n}: ${q}`).join('\n');
+
+        ctx.telegram.editMessageText(
+            ctx.chat.id,
+            loading.message_id,
+            null,
+            `🏥 လက်ရှိဆေးလက်ကျန် (page ${safePage}/${totalPages}, total ${stockRows.length})\n\n${stockList}\n\nUse /stock <page>`
+        );
     } catch (e) { 
         console.error("Stock Command Error:", e);
         ctx.telegram.editMessageText(ctx.chat.id, loading.message_id, null, "❌ Error: " + e.message); 
@@ -1479,19 +1495,27 @@ bot.command('staff', async (ctx) => {
 bot.command('unpaid', async (ctx) => {
     const allowed = await isStaffOrAdmin(ctx.from.id);
     if (!allowed) return ctx.reply('❌ Not authorized.');
+    const parts = ctx.message.text.split(' ').slice(1).filter(Boolean);
+    const page = Math.max(1, parseInt(parts[0] || '1', 10) || 1);
+    const pageSize = 20;
     const sheets = google.sheets({ version: 'v4', auth });
     const res = await sheets.spreadsheets.values.get({ spreadsheetId: CONFIG.SHEET_ID, range: `${SHEETS.MAIN}!A:N` });
     const rows = res.data.values || [];
     const unpaid = rows
         .slice(1)
         .filter((r) => String(r[8] || '').trim().toLowerCase() !== 'paid')
-        .slice(-20)
         .reverse();
     if (!unpaid.length) return ctx.reply('✅ No unpaid vouchers.');
-    const msg = unpaid
+
+    const totalPages = Math.max(1, Math.ceil(unpaid.length / pageSize));
+    const safePage = Math.min(page, totalPages);
+    const start = (safePage - 1) * pageSize;
+    const pageRows = unpaid.slice(start, start + pageSize);
+    const unpaidTotal = round2(unpaid.reduce((sum, r) => sum + (parseNumber(r[6]) || parseNumber(r[4])), 0));
+    const msg = pageRows
         .map((r) => `• ${r[0] || '-'} | ${r[1] || '-'} | ${r[2] || '-'} | ${r[4] || '-'}MMK`)
         .join('\n');
-    ctx.reply(`Unpaid (latest 20):\n${msg}`);
+    ctx.reply(`Unpaid (page ${safePage}/${totalPages}, total ${unpaid.length}): Unpaid Total= ${unpaidTotal}mmk\n${msg}\n\nUse /unpaid <page>`);
 });
 
 bot.command('markpaid', async (ctx) => {
